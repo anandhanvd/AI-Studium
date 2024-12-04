@@ -10,7 +10,7 @@ connectDB();
 
 // Middleware
 app.use(cors({
-  origin: process.env.FRONTEND_URL,
+  origin: ['http://localhost:3000', 'https://ai-studium-1.onrender.com'],
   credentials: true
 }));
 app.use(express.json());

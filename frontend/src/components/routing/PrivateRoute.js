@@ -1,36 +1,50 @@
 import { Navigate } from 'react-router-dom';
-import { useEffect, useState } from 'react';
+import { useState, useEffect } from 'react';
 import axios from 'axios';
+import API_BASE_URL from '../../config/api';
 
-const PrivateRoute = ({ children, role }) => {
-  const [isAuthorized, setIsAuthorized] = useState(null);
-  const token = localStorage.getItem('token');
+function PrivateRoute({ children, role }) {
+  const [isAuthenticated, setIsAuthenticated] = useState(null);
+  const [userRole, setUserRole] = useState(null);
 
   useEffect(() => {
-    const verifyUser = async () => {
-      if (!token) {
-        setIsAuthorized(false);
-        return;
-      }
-
+    const verifyAuth = async () => {
       try {
-        const res = await axios.get('http://localhost:5000/api/auth/me', {
+        const token = localStorage.getItem('token');
+        if (!token) {
+          setIsAuthenticated(false);
+          return;
+        }
+
+        const response = await axios.get(`${API_BASE_URL}/api/auth/me`, {
           headers: { 'x-auth-token': token }
         });
-        setIsAuthorized(res.data.role === role);
-      } catch (err) {
-        setIsAuthorized(false);
+
+        setUserRole(response.data.role);
+        setIsAuthenticated(true);
+      } catch (error) {
+        console.error('Auth verification error:', error);
+        setIsAuthenticated(false);
+        localStorage.removeItem('token');
       }
     };
 
-    verifyUser();
-  }, [token, role]);
+    verifyAuth();
+  }, []);
 
-  if (isAuthorized === null) {
+  if (isAuthenticated === null) {
     return <div>Loading...</div>;
   }
 
-  return isAuthorized ? children : <Navigate to="/login" />;
-};
+  if (!isAuthenticated) {
+    return <Navigate to="/login" />;
+  }
+
+  if (role && role !== userRole) {
+    return <Navigate to={`/${userRole}-dashboard`} />;
+  }
+
+  return children;
+}
 
 export default PrivateRoute;
