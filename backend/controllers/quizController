@@ -1,0 +1,293 @@
+const Quiz = require('../models/Quiz');
+const { Configuration, OpenAIApi } = require('openai');
+
+const configuration = new Configuration({
+  apiKey: process.env.OPENAI_API_KEY
+});
+
+const openai = new OpenAIApi(configuration);
+
+const calculateQuestionDifficulty = (timeTaken, isCorrect, baseDifficulty) => {
+  let difficulty = baseDifficulty;
+  
+  // Adjust based on time taken (longer time = more difficult)
+  if (timeTaken > 2) difficulty += 1;
+  if (timeTaken > 4) difficulty += 1;
+  
+  // Adjust based on correctness
+  if (!isCorrect) difficulty += 1;
+  
+  return Math.min(Math.max(difficulty, 0), 10);
+};
+
+const parseQuizQuestions = (text) => {
+  console.log('Raw OpenAI response:', text);
+  const questions = [];
+  const questionBlocks = text.split('\n\n');
+
+  for (const block of questionBlocks) {
+    if (!block.trim()) continue;
+
+    try {
+      console.log('Processing block:', block);
+
+      const lines = block.split('\n');
+      const questionLine = lines.find(line => line.startsWith('Question:'));
+      const optionsLine = lines.find(line => line.startsWith('Options:'));
+      const correctLine = lines.find(line => line.startsWith('Correct:'));
+      const difficultyLine = lines.find(line => line.startsWith('Difficulty:'));
+
+      if (!questionLine || !optionsLine || !correctLine || !difficultyLine) {
+        console.log('Skipping invalid block:', block);
+        continue;
+      }
+
+      const question = questionLine.replace('Question:', '').trim();
+      
+      let options;
+      try {
+        const optionsText = optionsLine.replace('Options:', '').trim();
+        console.log('Parsing options text:', optionsText);
+        
+        if (optionsText.startsWith('[')) {
+          options = JSON.parse(optionsText);
+        } else {
+          options = optionsText.split(',').map(opt => opt.trim());
+        }
+        
+        if (!Array.isArray(options) || options.length === 0) {
+          console.log('Invalid options array:', options);
+          continue;
+        }
+      } catch (e) {
+        console.log('Error parsing options:', e.message);
+        console.log('Options line:', optionsLine);
+        continue;
+      }
+
+      const correct = parseInt(correctLine.replace('Correct:', '').trim());
+      if (isNaN(correct) || correct < 0 || correct >= options.length) {
+        console.log('Invalid correct answer:', correctLine);
+        continue;
+      }
+
+      const difficulty = difficultyLine.replace('Difficulty:', '').trim().toLowerCase();
+      if (!['easy', 'medium', 'hard'].includes(difficulty)) {
+        console.log('Invalid difficulty:', difficultyLine);
+        continue;
+      }
+
+      questions.push({
+        question,
+        options,
+        correctAnswer: correct,
+        difficulty
+      });
+    } catch (error) {
+      console.error('Error parsing question block:', error);
+      console.log('Problematic block:', block);
+      continue;
+    }
+  }
+
+  console.log('Total questions parsed:', questions.length);
+  return questions;
+};
+
+exports.generateQuiz = async (req, res) => {
+  try {
+    const { subject, level, topic } = req.body;
+    const userId = req.user.id;
+
+    console.log(`Generating quiz for: Subject: ${subject}, Level: ${level}, Topic: ${topic}`);
+
+    const prompt = `Create 5 multiple choice questions about ${topic} in ${subject} for ${level} level students.
+Format each question exactly as shown below, with no additional text:
+
+Question: Write the question here
+Options: ["option 1", "option 2", "option 3", "option 4"]
+Correct: 0
+Difficulty: easy
+
+Make sure:
+1. Each question follows this exact format
+2. Options are in valid JSON array format with quotes
+3. Correct is a number (0-3) indicating the index of the correct option
+4. Difficulty is either easy, medium, or hard
+5. Questions should be of mixed difficulties
+6. Questions can have calculations but the final answer should be an integer
+7. Separate questions with a blank line`;
+
+    const completion = await openai.createChatCompletion({
+      model: "gpt-3.5-turbo",
+      messages: [{
+        role: "system",
+        content: "You are a quiz generator that creates questions in a specific format. Follow the format exactly."
+      }, {
+        role: "user",
+        content: prompt
+      }],
+      temperature: 0.7,
+      max_tokens: 2000
+    });
+
+    const questions = parseQuizQuestions(completion.data.choices[0].message.content);
+    
+    if (questions.length === 0) {
+      throw new Error('Failed to generate valid questions');
+    }
+
+    const quiz = new Quiz({
+      userId,
+      subject,
+      level,
+      topic,
+      questions,
+      startTime: new Date()
+    });
+
+    await quiz.save();
+
+    const quizData = {
+      id: quiz._id,
+      questions: questions.map(q => ({
+        question: q.question,
+        options: q.options,
+        difficulty: q.difficulty
+      }))
+    };
+
+    res.json(quizData);
+
+  } catch (error) {
+    console.error('Quiz generation error:', error);
+    res.status(500).json({ 
+      message: 'Error generating quiz', 
+      error: error.message,
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+};
+
+exports.submitQuiz = async (req, res) => {
+  try {
+    const { quizId, answers, startTime, endTime, questionTimes } = req.body;
+    const quiz = await Quiz.findById(quizId);
+
+    if (!quiz) {
+      return res.status(404).json({ message: 'Quiz not found' });
+    }
+
+    let totalScore = 0;
+    let totalDifficulty = 0;
+    const totalTimeTaken = (endTime - startTime) / (1000 * 60); // Convert to minutes
+
+    const attempts = Object.entries(answers).map(([questionIndex, answer]) => {
+      const question = quiz.questions[questionIndex];
+      const isCorrect = answer === question.correctAnswer;
+      const timeTaken = questionTimes[questionIndex] / (1000 * 60); // Convert to minutes
+      
+      // Calculate base difficulty from question difficulty
+      const baseDifficulty = question.difficulty === 'easy' ? 3 : 
+                            question.difficulty === 'medium' ? 6 : 9;
+      
+      const questionDifficulty = calculateQuestionDifficulty(
+        timeTaken,
+        isCorrect,
+        baseDifficulty
+      );
+      
+      totalDifficulty += questionDifficulty;
+      totalScore += isCorrect ? 2 : 0;
+
+      return {
+        questionId: question._id,
+        userAnswer: answer,
+        timeSpent: Math.round(timeTaken * 60), // Convert to seconds for storage
+        isCorrect
+      };
+    });
+
+    const averageTimePerQuestion = totalTimeTaken / quiz.questions.length;
+    const averageQuestionDifficulty = totalDifficulty / quiz.questions.length;
+    const scorePercentage = (totalScore / (quiz.questions.length * 2)) * 100;
+
+    // Calculate topic difficulty based on performance and time
+    const topicDifficulty = Math.min(
+      10,
+      (averageQuestionDifficulty * 0.7) + 
+      (averageTimePerQuestion > 2 ? 2 : 0) + 
+      (scorePercentage < 60 ? 2 : 0)
+    );
+
+    // ML data preparation
+    const mlData = {
+      timeTakenPerQuestion: averageTimePerQuestion,
+      questionDifficulty: averageQuestionDifficulty,
+      topicDifficulty,
+      scorePercentage,
+      skillLevel: quiz.level // Initial skill level, can be adjusted based on performance
+    };
+
+    quiz.attempts = attempts;
+    quiz.score = totalScore;
+    quiz.mlData = mlData;
+    quiz.endTime = new Date(endTime);
+
+    await quiz.save();
+
+    res.json({
+      score: totalScore,
+      totalQuestions: quiz.questions.length,
+      attempts: attempts.map(a => ({
+        isCorrect: a.isCorrect,
+        timeSpent: a.timeSpent
+      })),
+      mlData
+    });
+  } catch (error) {
+    console.error('Error submitting quiz:', error);
+    res.status(500).json({ message: 'Error submitting quiz' });
+  }
+};
+
+exports.getQuizHistory = async (req, res) => {
+  try {
+    const quizzes = await Quiz.find({ userId: req.user.id })
+      .select('subject topic level score startTime endTime mlData')
+      .sort({ startTime: -1 });
+    
+    res.json(quizzes);
+  } catch (error) {
+    console.error('Error fetching quiz history:', error);
+    res.status(500).json({ message: 'Error fetching quiz history' });
+  }
+};
+
+exports.getQuizResults = async (req, res) => {
+  try {
+    const quiz = await Quiz.findOne({ 
+      _id: req.params.quizId,
+      userId: req.user.id 
+    });
+
+    if (!quiz) {
+      return res.status(404).json({ message: 'Quiz not found' });
+    }
+
+    res.json({
+      subject: quiz.subject,
+      topic: quiz.topic,
+      level: quiz.level,
+      score: quiz.score,
+      questions: quiz.questions,
+      attempts: quiz.attempts,
+      mlData: quiz.mlData,
+      startTime: quiz.startTime,
+      endTime: quiz.endTime
+    });
+  } catch (error) {
+    console.error('Error fetching quiz results:', error);
+    res.status(500).json({ message: 'Error fetching quiz results' });
+  }
+};
