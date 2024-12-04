@@ -16,6 +16,7 @@ import {
 } from '@mui/material';
 import axios from 'axios';
 import ChatInterface from '../chat/ChatInterface';
+import API_BASE_URL from '../../config/api';
 
 function StudentDashboard() {
   const [userData, setUserData] = useState(null);
@@ -31,7 +32,7 @@ function StudentDashboard() {
         };
 
         // Fetch user data
-        const userRes = await axios.get('http://localhost:5000/api/auth/me', config);
+        const userRes = await axios.get(`${API_BASE_URL}/api/auth/me`, config);
         setUserData(userRes.data);
 
         // You can add more API calls here for courses and assignments

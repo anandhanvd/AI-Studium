@@ -11,6 +11,7 @@ import {
   LinearProgress
 } from '@mui/material';
 import axios from 'axios';
+import API_BASE_URL from '../../config/api';
 
 function ChatInterface() {
   const [messages, setMessages] = useState([]);
@@ -36,7 +37,7 @@ function ChatInterface() {
     const initializeChat = async () => {
       try {
         const token = localStorage.getItem('token');
-        const userRes = await axios.get('http://localhost:5000/api/auth/me', {
+        const userRes = await axios.get(`${API_BASE_URL}/api/auth/me`, {
           headers: { 'x-auth-token': token }
         });
         setUserData(userRes.data);
@@ -99,7 +100,7 @@ function ChatInterface() {
         try {
           const token = localStorage.getItem('token');
           const quizResponse = await axios.post(
-            'http://localhost:5000/api/quiz/generate',
+            `${API_BASE_URL}/api/quiz/generate`,
             {
               subject: conversationData.subject,
               level: conversationData.level,
@@ -181,7 +182,7 @@ function ChatInterface() {
       }
 
       const response = await axios.post(
-        'http://localhost:5000/api/quiz/submit',
+        `${API_BASE_URL}/api/quiz/submit`,
         {
           quizId: quiz.id,
           answers,
