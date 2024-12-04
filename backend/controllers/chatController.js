@@ -1,4 +1,4 @@
-const Chat = require('../models/Chat');
+const Chat = require('../models/chat');
 const { Configuration, OpenAIApi } = require('openai');
 
 const configuration = new Configuration({
