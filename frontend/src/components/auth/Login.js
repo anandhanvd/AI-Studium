@@ -10,6 +10,7 @@ import {
   Alert
 } from '@mui/material';
 import axios from 'axios';
+import API_BASE_URL from '../../config/api';
 
 function Login() {
   const navigate = useNavigate();
@@ -22,11 +23,11 @@ function Login() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      const res = await axios.post('http://localhost:5000/api/auth/login', formData);
+      const res = await axios.post(`${API_BASE_URL}/api/auth/login`, formData);
       localStorage.setItem('token', res.data.token);
       
       // Get user details
-      const userRes = await axios.get('http://localhost:5000/api/auth/me', {
+      const userRes = await axios.get(`${API_BASE_URL}/api/auth/me`, {
         headers: { 'x-auth-token': res.data.token }
       });
       

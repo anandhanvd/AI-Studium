@@ -14,6 +14,7 @@ import {
   Alert
 } from '@mui/material';
 import axios from 'axios';
+import API_BASE_URL from '../../config/api';
 
 function Signup() {
   const navigate = useNavigate();
@@ -28,7 +29,7 @@ function Signup() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      await axios.post('http://localhost:5000/api/auth/signup', formData);
+      await axios.post(`${API_BASE_URL}/api/auth/signup`, formData);
       navigate('/login');
     } catch (err) {
       setError(err.response?.data?.message || 'An error occurred');
